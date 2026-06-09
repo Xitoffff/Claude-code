@@ -10,8 +10,18 @@ const api = async (path, opts) => {
 const state = {
   running: false,
   lastLogTs: null,
-  filters: { search: "", query: "", onlyNew: false },
+  filters: { search: "", query: "", onlyNew: false, noReviews: false, newSeller: false },
 };
+
+function filterParams(extra = {}) {
+  const p = new URLSearchParams({ limit: "120", ...extra });
+  if (state.filters.search) p.set("search", state.filters.search);
+  if (state.filters.query) p.set("query", state.filters.query);
+  if (state.filters.onlyNew) p.set("only_new", "true");
+  if (state.filters.noReviews) p.set("no_reviews", "true");
+  if (state.filters.newSeller) p.set("new_seller", "true");
+  return p;
+}
 
 const AVATAR_COLORS = ["#1dbf73","#4aa8f5","#f5b94a","#b478ff","#ff5f6d","#19a463","#ef6cb5","#2dd4bf"];
 const colorFor = (s) => {
@@ -79,10 +89,7 @@ function gigCard(g) {
 }
 
 async function refreshFeed() {
-  const p = new URLSearchParams({ limit: "120" });
-  if (state.filters.search) p.set("search", state.filters.search);
-  if (state.filters.query) p.set("query", state.filters.query);
-  if (state.filters.onlyNew) p.set("only_new", "true");
+  const p = filterParams();
   try {
     const { gigs, count } = await api(`/api/gigs?${p}`);
     $("#feed-count").textContent = count;
@@ -184,6 +191,14 @@ function wire() {
   });
   $("#filter-query").addEventListener("change", (e) => { state.filters.query = e.target.value; refreshFeed(); });
   $("#filter-new").addEventListener("change", (e) => { state.filters.onlyNew = e.target.checked; refreshFeed(); });
+  $("#filter-noreviews").addEventListener("change", (e) => { state.filters.noReviews = e.target.checked; refreshFeed(); });
+  $("#filter-newseller").addEventListener("change", (e) => { state.filters.newSeller = e.target.checked; refreshFeed(); });
+
+  $("#btn-export").addEventListener("click", () => {
+    const p = filterParams({ limit: "500" });
+    window.location.href = `/api/export.txt?${p}`;
+    toast("Экспорт URL в .txt ⬇");
+  });
 }
 
 wire();

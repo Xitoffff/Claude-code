@@ -98,8 +98,13 @@
         <input type="search" id="filter-search" placeholder="🔎  Search title or seller…" />
         <select id="filter-query"><option value="">All queries</option></select>
         <label class="chk"><input type="checkbox" id="filter-new" /> New only</label>
+        <label class="chk"><input type="checkbox" id="filter-noreviews" /> Без отзывов</label>
+        <label class="chk"><input type="checkbox" id="filter-newseller" /> New Seller</label>
       </div>
-      <div class="feed-meta"><span id="feed-count">0</span> listings</div>
+      <div class="feed-meta">
+        <span id="feed-count">0</span> listings
+        <button class="btn btn-mini" id="btn-export" title="Экспорт URL в .txt">⬇ Export .txt</button>
+      </div>
     </section>
 
     <!-- Gig feed -->

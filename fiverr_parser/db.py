@@ -237,7 +237,8 @@ class Database:
     # -- queries for the GUI ----------------------------------------------
 
     def recent_gigs(self, limit: int = 100, query: str = "",
-                    only_new: bool = False, search: str = "") -> list[dict[str, Any]]:
+                    only_new: bool = False, search: str = "",
+                    no_reviews: bool = False, new_seller: bool = False) -> list[dict[str, Any]]:
         sql = [
             """SELECT g.*, s.username AS seller_username, s.display_name AS seller_name,
                       s.level AS seller_level, s.country AS seller_country,
@@ -251,6 +252,10 @@ class Database:
             params.append(query)
         if only_new:
             sql.append("AND g.is_new = 1")
+        if no_reviews:
+            sql.append("AND g.reviews_count = 0")
+        if new_seller:
+            sql.append("AND s.level = 'New Seller'")
         if search:
             sql.append("AND (g.title LIKE ? OR s.username LIKE ?)")
             like = f"%{search}%"

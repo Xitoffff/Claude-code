@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Query
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -72,9 +72,35 @@ def api_gigs(
     query: str = "",
     search: str = "",
     only_new: bool = False,
+    no_reviews: bool = False,
+    new_seller: bool = False,
 ) -> dict[str, Any]:
-    gigs = db.recent_gigs(limit=limit, query=query, only_new=only_new, search=search)
+    gigs = db.recent_gigs(
+        limit=limit, query=query, only_new=only_new, search=search,
+        no_reviews=no_reviews, new_seller=new_seller,
+    )
     return {"gigs": gigs, "count": len(gigs)}
+
+
+@app.get("/api/export.txt")
+def api_export(
+    limit: int = Query(500, ge=1, le=500),
+    query: str = "",
+    search: str = "",
+    only_new: bool = False,
+    no_reviews: bool = False,
+    new_seller: bool = False,
+) -> PlainTextResponse:
+    """Export the filtered gig URLs as a plain-text file, one URL per line."""
+    gigs = db.recent_gigs(
+        limit=limit, query=query, only_new=only_new, search=search,
+        no_reviews=no_reviews, new_seller=new_seller,
+    )
+    urls = "\n".join(g["url"] for g in gigs if g.get("url"))
+    return PlainTextResponse(
+        urls + ("\n" if urls else ""),
+        headers={"Content-Disposition": 'attachment; filename="fiverr_urls.txt"'},
+    )
 
 
 @app.get("/api/settings")
