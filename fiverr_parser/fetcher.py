@@ -182,6 +182,13 @@ class Fetcher:
                 except Exception:
                     pass
 
+        # Guard against empty / host-less URLs: fail fast instead of burning
+        # the whole retry budget on a request curl will reject anyway.
+        from urllib.parse import urlsplit
+        parts = urlsplit(url.strip())
+        if not parts.scheme or not parts.netloc:
+            raise FetchError(f"invalid URL (no host): {url!r}")
+
         headers = dict(BASE_HEADERS)
         headers["Referer"] = referer
         last_exc: Optional[Exception] = None
