@@ -1,16 +1,18 @@
 """Resilient HTTP fetcher for Fiverr.
 
-Fiverr fronts its site with an anti-bot layer (Cloudflare / PerimeterX),
-so a naive request is usually answered with HTTP 403. This fetcher gives
-the scraper the best realistic chance while staying polite and stable:
+Fiverr fronts its site with PerimeterX (HUMAN) + Cloudflare. The single
+biggest reason a request gets HTTP 403 is **TLS fingerprinting**: plain
+``httpx``/``requests`` present a non-browser JA3 fingerprint that the
+anti-bot layer flags at the network level, before it even looks at the IP.
 
-* a full set of modern Chrome headers (incl. sec-ch-ua / sec-fetch);
-* a persistent client that keeps cookies between requests;
-* exponential backoff with jitter on transient errors / 429 / 5xx;
-* optional outbound proxy support.
+So the primary transport here is :mod:`curl_cffi`, which wraps
+curl-impersonate to reproduce Chrome's exact TLS handshake and HTTP/2
+profile — making the request indistinguishable from a real browser on the
+wire. Combined with a rotating residential proxy this clears most 403s.
+If ``curl_cffi`` is not installed we fall back to ``httpx``.
 
-When the live site blocks the datacenter IP, run the app in demo mode or
-point ``proxy`` at a residential proxy / anti-bot solver.
+Other stability measures: realistic Chrome headers, fresh connection per
+retry (so a rotating proxy hands out a new exit IP), and capped backoff.
 """
 
 from __future__ import annotations
@@ -23,6 +25,16 @@ from urllib.parse import quote, urlunsplit
 import httpx
 
 from .config import CONFIG
+
+try:  # optional but strongly recommended for live scraping
+    from curl_cffi import requests as cffi_requests
+    _HAS_CFFI = True
+except Exception:  # pragma: no cover - depends on install
+    cffi_requests = None
+    _HAS_CFFI = False
+
+# curl_cffi impersonation target. "chrome" tracks the latest Chrome profile.
+IMPERSONATE = "chrome"
 
 _CHROME = "124.0.0.0"
 _UA = (
@@ -98,31 +110,46 @@ class FetchError(RuntimeError):
 
 
 class Fetcher:
-    """Thin wrapper around :class:`httpx.Client` with retry/backoff."""
+    """HTTP fetcher with browser TLS impersonation, retry and IP rotation.
+
+    Uses :mod:`curl_cffi` (Chrome impersonation) when available, otherwise
+    :mod:`httpx`. The public surface is a single :meth:`get`.
+    """
 
     def __init__(self, proxy: str = "", timeout: float = CONFIG.request_timeout,
-                 max_retries: int = CONFIG.max_retries):
+                 max_retries: int = CONFIG.max_retries, impersonate: str = IMPERSONATE):
         self.proxy = normalize_proxy(proxy) or None
         self.timeout = timeout
         self.max_retries = max_retries
-        self._client: Optional[httpx.Client] = None
+        self.impersonate = impersonate
+        self.engine = "curl_cffi" if _HAS_CFFI else "httpx"
+        self._client = None  # httpx.Client or curl_cffi Session
 
-    def _client_obj(self) -> httpx.Client:
-        if self._client is None:
+    # -- engine-specific session management --------------------------------
+
+    def _session(self):
+        if self._client is not None:
+            return self._client
+        if _HAS_CFFI:
+            self._client = cffi_requests.Session(
+                impersonate=self.impersonate,
+                proxies={"http": self.proxy, "https": self.proxy} if self.proxy else None,
+                timeout=self.timeout,
+                verify=True,
+            )
+        else:
             self._client = httpx.Client(
                 headers=BASE_HEADERS,
                 timeout=self.timeout,
                 follow_redirects=True,
                 proxy=self.proxy,
-                http2=False,
-                # No keep-alive: every request opens a fresh connection so a
-                # rotating proxy hands out a new exit IP on each retry.
+                http2=True,
                 limits=httpx.Limits(max_keepalive_connections=0, max_connections=20),
             )
         return self._client
 
     def _reset_connection(self) -> None:
-        """Drop the pooled connection so the next request rotates the IP."""
+        """Drop the session so the next request rotates the proxy exit IP."""
         if self._client is not None:
             try:
                 self._client.close()
@@ -130,18 +157,25 @@ class Fetcher:
                 pass
             self._client = None
 
+    def _do_get(self, url: str, headers: dict):
+        sess = self._session()
+        if _HAS_CFFI:
+            return sess.get(url, headers=headers, allow_redirects=True)
+        return sess.get(url, headers=headers)
+
     def get(self, url: str, *, referer: str = "https://www.fiverr.com/") -> str:
         """Fetch ``url`` returning response text.
 
-        Blocked responses (403/429/503) are retried: with a rotating proxy
-        each retry rides a fresh connection and thus a different exit IP,
-        which is usually enough to land on an unblocked one.
+        Blocked responses (403/429/503) are retried on a fresh connection,
+        so a rotating proxy serves a different exit IP each attempt — which,
+        together with the Chrome TLS fingerprint, usually clears the block.
         """
-        headers = {"Referer": referer}
+        headers = dict(BASE_HEADERS)
+        headers["Referer"] = referer
         last_exc: Optional[Exception] = None
         for attempt in range(1, self.max_retries + 1):
             try:
-                resp = self._client_obj().get(url, headers=headers)
+                resp = self._do_get(url, headers)
                 if resp.status_code == 200:
                     return resp.text
                 if resp.status_code in (403, 429, 503) or resp.status_code >= 500:
@@ -149,19 +183,18 @@ class Fetcher:
                     self._reset_connection()  # rotate IP before next attempt
                 else:
                     raise FetchError(f"HTTP {resp.status_code} for {url}")
-            except (httpx.TransportError, httpx.TimeoutException) as exc:
+            except FetchError:
+                raise
+            except Exception as exc:  # transport/timeout across both engines
                 last_exc = exc
                 self._reset_connection()
-            # Short backoff with jitter — we want to cycle IPs quickly.
             if attempt < self.max_retries:
                 delay = min(2 ** (attempt - 1), 4) + random.uniform(0, 0.6)
                 time.sleep(delay)
         raise FetchError(str(last_exc) if last_exc else f"failed to fetch {url}")
 
     def close(self) -> None:
-        if self._client is not None:
-            self._client.close()
-            self._client = None
+        self._reset_connection()
 
     def __enter__(self) -> "Fetcher":
         return self

@@ -6,11 +6,20 @@ deduplication** and a focus on speed and resilience.
 
 ![stack](https://img.shields.io/badge/python-3.11+-3776AB) ![db](https://img.shields.io/badge/storage-SQLite%20(WAL)-003B57) ![ui](https://img.shields.io/badge/GUI-web%20dashboard-1dbf73)
 
+## Two GUIs
+
+- **🖥️ Native desktop app (PySide6/Qt)** — `python run_gui.py`. Dark themed
+  window with stat cards, a sortable listings table (double-click a row to
+  open the gig), filters (search / query / New only / Без отзывов /
+  New Seller), live log console, settings dialog and `.txt` export.
+- **🌐 Web dashboard (FastAPI)** — `python run.py`, open `http://127.0.0.1:8000`.
+  Same backend, browser UI.
+
 ## Highlights
 
-- **Beautiful GUI** — dark, responsive dashboard (FastAPI + vanilla JS): live
-  stat cards, gig feed with seller badges, filters, a real-time log console
-  and a settings drawer. No build step, runs in any browser.
+- **Beautiful GUI** — dark, polished interfaces (desktop *and* web) with live
+  stat cards, listings table/feed, seller badges, filters, a real-time log
+  console and settings.
 - **SQLite storage** — WAL journal + tuned PRAGMAs for fast writes; proper
   indexes; per-run history for observability.
 - **Seller deduplication** — natural unique key on `sellers.username` enforced
@@ -20,8 +29,11 @@ deduplication** and a focus on speed and resilience.
 - **Speed & stability** — short-lived pooled connections guarded by a lock
   (safe across the API + scheduler threads); batched atomic writes; every
   query is isolated so one failure can't stop the loop.
-- **Resilient fetching** — realistic Chrome headers, cookie persistence,
-  exponential backoff with jitter, and rotating-proxy support.
+- **Anti-bot aware fetching** — the main cause of Fiverr 403s is TLS/JA3
+  fingerprinting, so the fetcher uses **`curl_cffi` Chrome impersonation**
+  (real browser TLS handshake) over a rotating proxy, with a fresh
+  connection per retry to cycle exit IPs. Falls back to `httpx` if
+  `curl_cffi` is absent.
 - **Demo mode (default)** — generates realistic sample listings so the whole
   app (GUI, DB, dedup) works offline or when the live site blocks the IP.
 
@@ -29,8 +41,10 @@ deduplication** and a focus on speed and resilience.
 
 ```bash
 pip install -r requirements.txt
-python run.py
-# open http://127.0.0.1:8000
+
+python run_gui.py     # native desktop app  (Windows: double-click start_gui.bat)
+# — or —
+python run.py         # web dashboard at http://127.0.0.1:8000
 ```
 
 Click **Run now** for a one-off cycle, or **Start** to poll on an interval.
@@ -74,17 +88,19 @@ Settings are editable in the GUI and persisted in SQLite. Environment vars:
 ## Architecture
 
 ```
-run.py                      uvicorn entry point
+run_gui.py                  desktop GUI entry point (PySide6)
+run.py                      web dashboard entry point (uvicorn)
 fiverr_parser/
   config.py                 settings (env + persisted) and app config
   models.py                 Seller / Gig dataclasses
   db.py                     SQLite layer: WAL, dedup upserts, stats
-  fetcher.py                resilient HTTP client (headers, retries, proxy)
+  fetcher.py                curl_cffi (Chrome TLS) + httpx, retries, proxy
   parser.py                 extract gigs from Fiverr embedded JSON
   mock.py                   demo data generator (bounded seller pool)
   scraper.py                fetch -> parse -> store, per-run records
   scheduler.py              background polling controller
-  app.py                    FastAPI: JSON API + dashboard
+  gui.py                    PySide6 desktop application
+  app.py                    FastAPI: JSON API + web dashboard
   static/                   index.html, styles.css, app.js
 ```
 

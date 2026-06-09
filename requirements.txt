@@ -1,5 +1,14 @@
-fastapi>=0.110
-uvicorn>=0.29
+# Core
 httpx>=0.27
 selectolax>=0.3.21
 pydantic>=2.6
+
+# Live scraping: Chrome TLS impersonation to beat PerimeterX 403s
+curl_cffi>=0.7
+
+# Desktop GUI (native)
+PySide6-Essentials>=6.6
+
+# Web GUI (optional alternative dashboard)
+fastapi>=0.110
+uvicorn>=0.29
