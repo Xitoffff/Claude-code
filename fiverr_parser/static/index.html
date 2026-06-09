@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fiverr Radar — New Listings Parser</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛰️</text></svg>" />
+</head>
+<body>
+  <div id="toast-host" class="toast-host"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">🛰️</div>
+      <div class="brand-text">
+        <h1>Fiverr&nbsp;Radar</h1>
+        <span>new-listings parser</span>
+      </div>
+    </div>
+
+    <div class="status-pill" id="status-pill">
+      <span class="dot" id="status-dot"></span>
+      <span id="status-text">idle</span>
+    </div>
+
+    <div class="topbar-actions">
+      <span class="mode-badge" id="mode-badge">demo</span>
+      <button class="btn btn-ghost" id="btn-run">⚡ Run now</button>
+      <button class="btn btn-primary" id="btn-toggle">▶ Start</button>
+      <button class="btn btn-ghost" id="btn-settings" title="Settings">⚙</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- Stat cards -->
+    <section class="stats">
+      <div class="stat-card">
+        <div class="stat-icon i-gigs">📦</div>
+        <div><div class="stat-value" id="stat-gigs">0</div><div class="stat-label">Listings</div></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon i-sellers">👤</div>
+        <div><div class="stat-value" id="stat-sellers">0</div><div class="stat-label">Unique sellers</div></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon i-pro">⭐</div>
+        <div><div class="stat-value" id="stat-pro">0</div><div class="stat-label">Pro sellers</div></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon i-new">✨</div>
+        <div><div class="stat-value" id="stat-new">0</div><div class="stat-label">New · 24h</div></div>
+      </div>
+    </section>
+
+    <!-- Settings drawer -->
+    <section class="drawer" id="settings-drawer" hidden>
+      <h3>Settings</h3>
+      <div class="form-grid">
+        <label class="field span2">
+          <span>Search queries</span>
+          <input type="text" id="set-queries" placeholder="logo design, wordpress, video editing" />
+          <small>comma-separated — one scrape run per query</small>
+        </label>
+        <label class="field">
+          <span>Interval (seconds)</span>
+          <input type="number" id="set-interval" min="30" max="86400" />
+        </label>
+        <label class="field">
+          <span>Max per query</span>
+          <input type="number" id="set-max" min="1" max="200" />
+        </label>
+        <label class="field span2">
+          <span>Proxy (optional)</span>
+          <input type="text" id="set-proxy" placeholder="http://user:pass@host:port" />
+          <small>residential proxy / anti-bot solver for live scraping</small>
+        </label>
+        <label class="field toggle">
+          <input type="checkbox" id="set-demo" />
+          <span>Demo mode (offline sample data)</span>
+        </label>
+        <label class="field toggle">
+          <input type="checkbox" id="set-autostart" />
+          <span>Autostart on launch</span>
+        </label>
+      </div>
+      <div class="drawer-actions">
+        <button class="btn btn-ghost" id="btn-settings-cancel">Cancel</button>
+        <button class="btn btn-primary" id="btn-settings-save">Save</button>
+      </div>
+    </section>
+
+    <!-- Filters -->
+    <section class="toolbar">
+      <div class="filters">
+        <input type="search" id="filter-search" placeholder="🔎  Search title or seller…" />
+        <select id="filter-query"><option value="">All queries</option></select>
+        <label class="chk"><input type="checkbox" id="filter-new" /> New only</label>
+      </div>
+      <div class="feed-meta"><span id="feed-count">0</span> listings</div>
+    </section>
+
+    <!-- Gig feed -->
+    <section class="feed" id="feed"></section>
+
+    <!-- Log console -->
+    <section class="console">
+      <div class="console-head"><span>● live log</span><button class="btn btn-mini" id="btn-clearlog">clear</button></div>
+      <div class="console-body" id="console"></div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
