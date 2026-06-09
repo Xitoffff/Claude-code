@@ -43,11 +43,17 @@ class Settings:
     proxy: str = os.environ.get("FIVERR_PROXY", "")
     # Whether the background scheduler starts automatically on launch.
     autostart: bool = _env_bool("FIVERR_AUTOSTART", False)
+    # Parallelism: how many fetch workers run at once across queries/pages.
+    concurrency: int = int(os.environ.get("FIVERR_CONCURRENCY", "8"))
+    # Search result pages to fetch per query (fetched in parallel).
+    pages_per_query: int = int(os.environ.get("FIVERR_PAGES", "1"))
 
     def sanitized(self) -> "Settings":
         """Clamp values into safe ranges to keep the scraper stable."""
         self.interval_seconds = max(30, min(int(self.interval_seconds), 86_400))
-        self.max_per_query = max(1, min(int(self.max_per_query), 200))
+        self.max_per_query = max(1, min(int(self.max_per_query), 400))
+        self.concurrency = max(1, min(int(self.concurrency), 32))
+        self.pages_per_query = max(1, min(int(self.pages_per_query), 10))
         self.queries = [q.strip() for q in self.queries if q and q.strip()][:25]
         if not self.queries:
             self.queries = ["logo design"]

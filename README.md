@@ -26,9 +26,14 @@ deduplication** and a focus on speed and resilience.
   by a UNIQUE index and `INSERT … ON CONFLICT … DO UPDATE` upsert. Re-seeing a
   seller refreshes their profile and bumps `seen_count` — never a duplicate.
   Gigs are deduplicated the same way on `gigs.gig_id`.
-- **Speed & stability** — short-lived pooled connections guarded by a lock
-  (safe across the API + scheduler threads); batched atomic writes; every
-  query is isolated so one failure can't stop the loop.
+- **Fast & parallel** — queries and result pages are fetched concurrently in
+  a thread pool (`concurrency` workers), so a cycle takes about as long as
+  its slowest single query instead of the sum of all (~N× faster). On a 403
+  the rotating proxy switches IP instantly, so retries use a tiny delay
+  rather than exponential backoff.
+- **Stability** — short-lived pooled connections guarded by a lock (safe
+  across threads); batched atomic writes; every query is isolated so one
+  failure can't stop the loop.
 - **Anti-bot aware fetching** — the main cause of Fiverr 403s is TLS/JA3
   fingerprinting, so the fetcher uses **`curl_cffi` Chrome impersonation**
   (real browser TLS handshake) over a rotating proxy, with a fresh

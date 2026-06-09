@@ -196,6 +196,8 @@ class Fetcher:
                     emit("warn", f"HTTP {resp.status_code} — rotating IP, retrying")
                     last_exc = FetchError(f"HTTP {resp.status_code} for {url}")
                     self._reset_connection()  # rotate IP before next attempt
+                    # Rotating proxy changes IP instantly — no long backoff.
+                    delay = 0.25 + random.uniform(0, 0.35)
                 else:
                     raise FetchError(f"HTTP {resp.status_code} for {url}")
             except FetchError:
@@ -204,8 +206,9 @@ class Fetcher:
                 emit("warn", f"{type(exc).__name__}: {str(exc)[:80]} — retrying")
                 last_exc = exc
                 self._reset_connection()
+                # Real network error — back off a bit more before retrying.
+                delay = min(2 ** (attempt - 1), 3) + random.uniform(0, 0.5)
             if attempt < self.max_retries:
-                delay = min(2 ** (attempt - 1), 4) + random.uniform(0, 0.6)
                 time.sleep(delay)
         raise FetchError(str(last_exc) if last_exc else f"failed to fetch {url}")
 

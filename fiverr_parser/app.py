@@ -36,6 +36,8 @@ class SettingsIn(BaseModel):
     demo_mode: bool | None = None
     proxy: str | None = None
     autostart: bool | None = None
+    concurrency: int | None = None
+    pages_per_query: int | None = None
 
 
 @app.on_event("startup")

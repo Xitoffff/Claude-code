@@ -7,6 +7,7 @@ failure is contained so one bad query can never take down the loop.
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -43,6 +44,38 @@ class Scraper:
             except Exception:  # never let logging break scraping
                 pass
 
+    def _fetch_query_pages(self, query: str, pages: int, settings: Settings):
+        """Fetch and parse N result pages of a query in parallel.
+
+        Each page uses its own Fetcher (curl_cffi sessions are per-thread),
+        so a rotating proxy gives every page a fresh exit IP. Results are
+        merged and de-duplicated by gig id.
+        """
+        from .models import Gig  # local import to avoid cycle at top
+
+        def one_page(page: int) -> list[Gig]:
+            url = build_search_url(query, page=page)
+            with Fetcher(proxy=settings.proxy) as fetcher:
+                html = fetcher.get(url, on_event=self._emit)
+            return extract_gigs(html, query)
+
+        if pages == 1:
+            return one_page(1)
+
+        merged: dict[str, Gig] = {}
+        errors: list[Exception] = []
+        workers = min(pages, max(1, settings.concurrency))
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            for fut in [ex.submit(one_page, p) for p in range(1, pages + 1)]:
+                try:
+                    for g in fut.result():
+                        merged.setdefault(g.gig_id, g)
+                except Exception as exc:  # one bad page must not sink the rest
+                    errors.append(exc)
+        if errors and not merged:
+            raise errors[0]
+        return list(merged.values())
+
     def scrape_query(self, query: str, settings: Settings) -> CycleResult:
         run_id = self.db.start_run(query)
         result = CycleResult()
@@ -51,11 +84,10 @@ class Scraper:
                 gigs = mock.generate(query, settings.max_per_query)
                 self._emit("info", f"[demo] '{query}': generated {len(gigs)} listings")
             else:
-                url = build_search_url(query)
-                self._emit("info", f"'{query}': fetching live…")
-                with Fetcher(proxy=settings.proxy) as fetcher:
-                    html = fetcher.get(url, on_event=self._emit)
-                gigs = extract_gigs(html, query)[: settings.max_per_query]
+                pages = max(1, settings.pages_per_query)
+                self._emit("info", f"'{query}': fetching live ({pages} page(s))…")
+                gigs = self._fetch_query_pages(query, pages, settings)
+                gigs = gigs[: settings.max_per_query]
                 self._emit("info", f"'{query}': parsed {len(gigs)} listings")
                 if not gigs:
                     self._emit("warn", f"'{query}': no listings parsed (site may have blocked the request)")
@@ -85,19 +117,36 @@ class Scraper:
         return result
 
     def run_cycle(self, settings: Settings) -> CycleResult:
-        """Scrape every configured query once and aggregate the result."""
+        """Scrape every configured query once, running queries in parallel."""
+        import time
+
         mode = "demo" if settings.demo_mode else "live"
-        self._emit("info", f"Cycle started ({mode}): {len(settings.queries)} queries → {settings.queries}")
+        queries = settings.queries
+        workers = max(1, min(settings.concurrency, len(queries)))
+        self._emit(
+            "info",
+            f"Cycle started ({mode}): {len(queries)} queries, "
+            f"{workers} parallel workers → {queries}",
+        )
+        started = time.monotonic()
         total = CycleResult()
-        for query in settings.queries:
-            r = self.scrape_query(query, settings)
+        # Demo generation is CPU-trivial; run it inline. Live fetches are
+        # I/O-bound and benefit from running concurrently.
+        if workers == 1 or len(queries) == 1:
+            results = [self.scrape_query(q, settings) for q in queries]
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                results = list(ex.map(lambda q: self.scrape_query(q, settings), queries))
+        for r in results:
             total.found += r.found
             total.new_gigs += r.new_gigs
             total.new_sellers += r.new_sellers
             total.errors += r.errors
+        elapsed = time.monotonic() - started
         self._emit(
             "info",
-            f"Cycle done: {total.found} seen, +{total.new_gigs} new gigs, "
-            f"+{total.new_sellers} new sellers, {total.errors} errors",
+            f"Cycle done in {elapsed:.1f}s: {total.found} seen, "
+            f"+{total.new_gigs} new gigs, +{total.new_sellers} new sellers, "
+            f"{total.errors} errors",
         )
         return total
