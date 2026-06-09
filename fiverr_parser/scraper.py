@@ -52,8 +52,9 @@ class Scraper:
                 self._emit("info", f"[demo] '{query}': generated {len(gigs)} listings")
             else:
                 url = build_search_url(query)
+                self._emit("info", f"'{query}': fetching live…")
                 with Fetcher(proxy=settings.proxy) as fetcher:
-                    html = fetcher.get(url)
+                    html = fetcher.get(url, on_event=self._emit)
                 gigs = extract_gigs(html, query)[: settings.max_per_query]
                 self._emit("info", f"'{query}': parsed {len(gigs)} listings")
                 if not gigs:
@@ -85,6 +86,8 @@ class Scraper:
 
     def run_cycle(self, settings: Settings) -> CycleResult:
         """Scrape every configured query once and aggregate the result."""
+        mode = "demo" if settings.demo_mode else "live"
+        self._emit("info", f"Cycle started ({mode}): {len(settings.queries)} queries → {settings.queries}")
         total = CycleResult()
         for query in settings.queries:
             r = self.scrape_query(query, settings)

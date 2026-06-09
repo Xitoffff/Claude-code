@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import random
 import time
-from typing import Optional
+from typing import Callable, Optional
 from urllib.parse import quote, urlunsplit
 
 import httpx
@@ -163,22 +163,37 @@ class Fetcher:
             return sess.get(url, headers=headers, allow_redirects=True)
         return sess.get(url, headers=headers)
 
-    def get(self, url: str, *, referer: str = "https://www.fiverr.com/") -> str:
+    def get(self, url: str, *, referer: str = "https://www.fiverr.com/",
+            on_event: "Optional[Callable[[str, str], None]]" = None) -> str:
         """Fetch ``url`` returning response text.
 
         Blocked responses (403/429/503) are retried on a fresh connection,
         so a rotating proxy serves a different exit IP each attempt — which,
         together with the Chrome TLS fingerprint, usually clears the block.
+
+        ``on_event(level, message)`` is called once per attempt so callers
+        (e.g. the GUI log) can show live progress; curl_cffi is otherwise
+        silent.
         """
+        def emit(level: str, msg: str) -> None:
+            if on_event:
+                try:
+                    on_event(level, msg)
+                except Exception:
+                    pass
+
         headers = dict(BASE_HEADERS)
         headers["Referer"] = referer
         last_exc: Optional[Exception] = None
         for attempt in range(1, self.max_retries + 1):
+            emit("info", f"GET {url}  (attempt {attempt}/{self.max_retries}, {self.engine})")
             try:
                 resp = self._do_get(url, headers)
                 if resp.status_code == 200:
+                    emit("info", f"200 OK · {len(resp.text)//1024} KB")
                     return resp.text
                 if resp.status_code in (403, 429, 503) or resp.status_code >= 500:
+                    emit("warn", f"HTTP {resp.status_code} — rotating IP, retrying")
                     last_exc = FetchError(f"HTTP {resp.status_code} for {url}")
                     self._reset_connection()  # rotate IP before next attempt
                 else:
@@ -186,6 +201,7 @@ class Fetcher:
             except FetchError:
                 raise
             except Exception as exc:  # transport/timeout across both engines
+                emit("warn", f"{type(exc).__name__}: {str(exc)[:80]} — retrying")
                 last_exc = exc
                 self._reset_connection()
             if attempt < self.max_retries:
