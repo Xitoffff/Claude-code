@@ -24,7 +24,8 @@ _GIG_ID_KEYS = ("gig_id", "gigId", "id", "auction_id")
 _TITLE_KEYS = ("gig_title", "title", "cached_slug_title", "displayTitle")
 _SLUG_KEYS = ("cached_slug", "slug", "gig_url", "url")
 _SELLER_NAME_KEYS = ("seller_name", "sellerName", "username", "seller_username")
-_PRICE_KEYS = ("price", "package_price", "price_i", "buying_review_rating")
+# price_i is integer cents on Fiverr; prefer it, then fall back to others.
+_PRICE_KEYS = ("price_i", "price", "package_price", "packageI", "starting_price")
 
 
 def _first(d: dict, keys: Iterable[str], default=None):
@@ -76,73 +77,119 @@ def _walk(obj: Any) -> Iterable[dict]:
             yield from _walk(v)
 
 
-def _to_price_cents(value: Any) -> int:
-    if value is None:
-        return 0
+# Sub-keys we probe when a numeric value arrives wrapped in an object,
+# e.g. Fiverr sends ratings as {"score": 4.9, "count": 12}.
+_NUM_SUBKEYS = ("score", "value", "amount", "rating", "price", "count", "total")
+
+
+def _num(value: Any, depth: int = 0) -> float:
+    """Best-effort float from messy values (number / str / nested dict).
+
+    Real Fiverr payloads wrap numbers in objects, so a naive ``float()``
+    would raise on a dict. This coerces safely and never raises.
+    """
+    if value is None or isinstance(value, bool):
+        return 0.0
     if isinstance(value, (int, float)):
-        # Fiverr sometimes stores cents, sometimes dollars.
-        return int(value) if value > 1000 else int(round(float(value) * 100))
-    m = re.search(r"(\d+(?:\.\d+)?)", str(value))
-    return int(round(float(m.group(1)) * 100)) if m else 0
+        return float(value)
+    if isinstance(value, str):
+        m = re.search(r"-?\d+(?:\.\d+)?", value)
+        return float(m.group()) if m else 0.0
+    if isinstance(value, dict) and depth < 3:
+        for k in _NUM_SUBKEYS:
+            if k in value:
+                return _num(value[k], depth + 1)
+    return 0.0
+
+
+def _int(value: Any) -> int:
+    return int(_num(value))
+
+
+def _text(value: Any) -> str:
+    """Coerce any value to a clean string (objects -> '')."""
+    if value is None or isinstance(value, (dict, list)):
+        return ""
+    return str(value).strip()
+
+
+def _to_price_cents(value: Any) -> int:
+    """Fiverr stores price as cents, dollars, a string, or an object."""
+    amount = _num(value)
+    if amount <= 0:
+        return 0
+    # Heuristic: integer values above 1000 are already cents.
+    if float(amount).is_integer() and amount >= 1000:
+        return int(amount)
+    return int(round(amount * 100))
 
 
 def _build_seller(obj: dict) -> Seller:
     nested = obj.get("seller") if isinstance(obj.get("seller"), dict) else {}
     username = _first(obj, _SELLER_NAME_KEYS) or _first(nested, _SELLER_NAME_KEYS) or ""
-    profile = obj.get("seller_url") or nested.get("url") or (
+    username = _text(username)
+    profile = _text(obj.get("seller_url") or nested.get("url")) or (
         f"https://www.fiverr.com/{username}" if username else ""
     )
     level = (
         obj.get("seller_level") or nested.get("level")
         or obj.get("seller_level_name") or ""
     )
+    level = _text(level)
     return Seller(
-        username=str(username),
-        display_name=str(obj.get("seller_display_name") or nested.get("displayName") or username),
-        level=str(level).replace("_", " ").title() if level else "",
-        country=str(obj.get("seller_country") or nested.get("country") or ""),
-        avatar_url=str(obj.get("seller_img") or nested.get("image") or ""),
-        profile_url=str(profile),
+        username=username,
+        display_name=_text(obj.get("seller_display_name") or nested.get("displayName")) or username,
+        level=level.replace("_", " ").title() if level else "",
+        country=_text(obj.get("seller_country") or nested.get("country")),
+        avatar_url=_text(obj.get("seller_img") or nested.get("image")),
+        profile_url=profile,
         is_pro=bool(obj.get("is_pro") or obj.get("agency") or nested.get("isPro")),
-        rating=float(obj.get("seller_rating") or nested.get("rating") or 0) or 0.0,
-        reviews_count=int(obj.get("seller_reviews_count") or nested.get("ratingsCount") or 0),
+        rating=_num(obj.get("seller_rating") or nested.get("rating")),
+        reviews_count=_int(obj.get("seller_reviews_count") or nested.get("ratingsCount")),
     )
 
 
 def _build_gig(obj: dict, query: str) -> Gig | None:
     gig_id = _first(obj, _GIG_ID_KEYS)
-    title = _first(obj, _TITLE_KEYS)
+    title = _text(_first(obj, _TITLE_KEYS))
     if not gig_id or not title:
         return None
-    slug = str(_first(obj, _SLUG_KEYS) or "")
+    slug = _text(_first(obj, _SLUG_KEYS))
     url = slug if slug.startswith("http") else (
         f"https://www.fiverr.com/{slug}" if slug else ""
     )
-    reviews = int(obj.get("buying_review_rating_count") or obj.get("reviews_count") or 0)
+    reviews = _int(obj.get("buying_review_rating_count") or obj.get("reviews_count"))
     return Gig(
         gig_id=str(gig_id),
-        title=str(title),
+        title=title,
         url=url,
         slug=slug,
-        category=str(obj.get("category_name") or obj.get("sub_category") or ""),
+        category=_text(obj.get("category_name") or obj.get("sub_category")),
         query=query,
         price_cents=_to_price_cents(_first(obj, _PRICE_KEYS)),
-        currency=str(obj.get("currency") or "USD"),
-        rating=float(obj.get("gig_rating") or obj.get("rating") or 0) or 0.0,
+        currency=_text(obj.get("currency")) or "USD",
+        rating=_num(obj.get("gig_rating") or obj.get("rating")),
         reviews_count=reviews,
-        image_url=str(obj.get("gig_img") or obj.get("image") or obj.get("cloudImgMpoUrl") or ""),
+        image_url=_text(obj.get("gig_img") or obj.get("image") or obj.get("cloudImgMpoUrl")),
         is_new=reviews == 0,
         seller=_build_seller(obj),
     )
 
 
 def extract_gigs(html: str, query: str = "") -> list[Gig]:
-    """Parse ``html`` and return the list of unique gigs found."""
+    """Parse ``html`` and return the list of unique gigs found.
+
+    Parsing of an individual candidate is isolated: a single malformed
+    gig object can never abort extraction of the rest.
+    """
     seen: set[str] = set()
     gigs: list[Gig] = []
     for blob in _iter_json_blobs(html):
         for candidate in _walk(blob):
-            gig = _build_gig(candidate, query)
+            try:
+                gig = _build_gig(candidate, query)
+            except Exception:  # defensive: never let one bad node crash a run
+                continue
             if gig and gig.gig_id not in seen:
                 seen.add(gig.gig_id)
                 gigs.append(gig)

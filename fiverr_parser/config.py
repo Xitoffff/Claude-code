@@ -71,7 +71,7 @@ class AppConfig:
     host: str = os.environ.get("FIVERR_HOST", "127.0.0.1")
     port: int = int(os.environ.get("FIVERR_PORT", "8000"))
     request_timeout: float = float(os.environ.get("FIVERR_TIMEOUT", "20"))
-    max_retries: int = int(os.environ.get("FIVERR_RETRIES", "3"))
+    max_retries: int = int(os.environ.get("FIVERR_RETRIES", "6"))
 
 
 CONFIG = AppConfig()

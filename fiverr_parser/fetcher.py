@@ -115,11 +115,28 @@ class Fetcher:
                 follow_redirects=True,
                 proxy=self.proxy,
                 http2=False,
+                # No keep-alive: every request opens a fresh connection so a
+                # rotating proxy hands out a new exit IP on each retry.
+                limits=httpx.Limits(max_keepalive_connections=0, max_connections=20),
             )
         return self._client
 
+    def _reset_connection(self) -> None:
+        """Drop the pooled connection so the next request rotates the IP."""
+        if self._client is not None:
+            try:
+                self._client.close()
+            except Exception:
+                pass
+            self._client = None
+
     def get(self, url: str, *, referer: str = "https://www.fiverr.com/") -> str:
-        """Fetch ``url`` returning response text, retrying transient failures."""
+        """Fetch ``url`` returning response text.
+
+        Blocked responses (403/429/503) are retried: with a rotating proxy
+        each retry rides a fresh connection and thus a different exit IP,
+        which is usually enough to land on an unblocked one.
+        """
         headers = {"Referer": referer}
         last_exc: Optional[Exception] = None
         for attempt in range(1, self.max_retries + 1):
@@ -129,13 +146,15 @@ class Fetcher:
                     return resp.text
                 if resp.status_code in (403, 429, 503) or resp.status_code >= 500:
                     last_exc = FetchError(f"HTTP {resp.status_code} for {url}")
+                    self._reset_connection()  # rotate IP before next attempt
                 else:
                     raise FetchError(f"HTTP {resp.status_code} for {url}")
             except (httpx.TransportError, httpx.TimeoutException) as exc:
                 last_exc = exc
-            # Backoff: 1s, 2s, 4s ... with jitter, capped.
+                self._reset_connection()
+            # Short backoff with jitter — we want to cycle IPs quickly.
             if attempt < self.max_retries:
-                delay = min(2 ** (attempt - 1), 8) + random.uniform(0, 0.75)
+                delay = min(2 ** (attempt - 1), 4) + random.uniform(0, 0.6)
                 time.sleep(delay)
         raise FetchError(str(last_exc) if last_exc else f"failed to fetch {url}")
 
